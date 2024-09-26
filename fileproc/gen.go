@@ -27,7 +27,7 @@ var (
 )
 
 func LogFilePreEnv(out string) {
-	os.RemoveAll(out)
+	//os.RemoveAll(out)
 	os.MkdirAll(out, 0666)
 }
 

@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	UnrecoverPath = "./unrecover"
+	UnrecoverPath = "./miss"
 	ChangePath    = "./change"
 )
 
@@ -48,7 +48,6 @@ func CompareSampleFile(src, dst string) error {
 	var found []string
 	var notFound []string
 
-	os.RemoveAll(UnrecoverPath)
 	os.MkdirAll(UnrecoverPath, 0644)
 
 	for _, file := range df {
@@ -97,7 +96,7 @@ func FoundBackMd5Line(filename, md5 string) string {
 		if line == "" {
 			continue
 		}
-		if !strings.Contains(line, md5) {
+		if !strings.Contains(line, strings.ToLower(md5)) {
 			continue
 		}
 		return line
@@ -110,7 +109,7 @@ func FoundBackMd5Dir(path, md5 string) (*LogSample, error) {
 	var dlog LogSample
 
 	if exist := comm.PathExists(path); !exist {
-		return &dlog, fmt.Errorf("Path %s not exist, skip it!\n", path)
+		return &dlog, fmt.Errorf("path %s not exist, skip it", path)
 	}
 
 	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
@@ -192,7 +191,7 @@ func readTargzFile(filename, md5 string) error {
 
 	if hitMd5 {
 		fmt.Printf("拷贝文件: %s\n", filename)
-		dn := filepath.Join(ChangePath, filepath.Base(filename))
+		dn := filepath.Join(ChangePath, strings.ToLower(md5), filepath.Base(filename))
 		done := comm.CopyFile(filename, dn)
 		if done {
 			os.Remove(filename)
@@ -308,16 +307,23 @@ func uncompressDir(path string) {
 }
 
 func ExtractMd5File(path, md5 string) {
-	LogFilePreEnv(ChangePath)
+	LogFilePreEnv(filepath.Join(ChangePath, strings.ToLower(md5)))
 	//识别
 	extractLogFile(filepath.Join(path, IdentifyName), md5)
 	//监测
 	extractLogFile(filepath.Join(path, MonitorName), md5)
-	//关键字
-	extractLogFile(filepath.Join(path, KeywordName), md5)
+	//关键字生成话单和备份话单文件名不一致，需要再次处理一下
+	kfile := filepath.Join(path, KeywordName)
+	if exist := comm.PathExists(kfile); !exist {
+		kfile = filepath.Join(path, KeywordNameB)
+	}
+	extractLogFile(kfile, md5)
 
+	md5path := filepath.Join(ChangePath, strings.ToLower(md5))
 	//解压对应的压缩文件
-	uncompressDir(ChangePath)
+	uncompressDir(md5path)
+
+	fmt.Printf(">>>>>拷贝路径：%s\n", md5path)
 }
 
 func targzFile(filename string) {
@@ -373,7 +379,7 @@ func CompressLogtar(path string) {
 		if !d.IsDir() {
 			if strings.HasSuffix(d.Name(), "txt") {
 				targzFile(dir)
-				os.Remove(dir)
+				//os.Remove(dir)
 			}
 		}
 

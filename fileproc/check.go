@@ -6,4 +6,5 @@ const (
 	MonitorName   = "ds_data_monitor"
 	EvidenceName  = "ds_evidence_file"
 	KeywordName   = "ds_keyword_file"
+	KeywordNameB  = "ds_data_keyword"
 )
