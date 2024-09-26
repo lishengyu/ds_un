@@ -32,6 +32,9 @@ var (
 	//对当前路径下的文件进行压缩tar.gz
 	Compress = flag.Bool("compress", false, "对指定路径下的logtar文件进行压缩")
 
+	//对补报的话单和人工答案进行核对
+	Verify = flag.Bool("verify", false, "对已生成答案进行校验")
+
 	UsageFlag = flag.Bool("usage", false, "打印使用场景示例")
 
 	Stat    = flag.Bool("stat", false, "统计相关上报信息")
@@ -125,11 +128,22 @@ func printExtractMd5() {
 func printCompressMd5() {
 	fmt.Fprintf(os.Stderr, "\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n")
 	fmt.Fprintf(os.Stderr, "使用说明：\n")
-	fmt.Fprintf(os.Stderr, "    打包指定路径下的logtar文件\n")
+	fmt.Fprintf(os.Stderr, "    打包指定路径下的txt文件\n")
 	fmt.Fprintf(os.Stderr, "使用示例：\n")
 	fmt.Fprintf(os.Stderr, "    %s -compress -l ./change\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "输入：\n")
 	fmt.Fprintf(os.Stderr, "    -l 指定的话单文件路径\n")
+}
+
+func printVerifyResult() {
+	fmt.Fprintf(os.Stderr, "\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n")
+	fmt.Fprintf(os.Stderr, "使用说明：\n")
+	fmt.Fprintf(os.Stderr, "    校验已上报内容和人工结果是否一致（当前只取识别结果）\n")
+	fmt.Fprintf(os.Stderr, "使用示例：\n")
+	fmt.Fprintf(os.Stderr, "    %s -verify -l /home/udpi_log/ds_data_identify -md5 ./1.dict\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "输入：\n")
+	fmt.Fprintf(os.Stderr, "    -l   话单文件路径，示例 /home/udpi_log/ds_data_identify\n")
+	fmt.Fprintf(os.Stderr, "    -md5 人工确认的md5结果表\n")
 }
 
 func printGenUsage1() {
@@ -166,6 +180,7 @@ func printUsage() {
 	printGenLogtar()
 	printExtractMd5()
 	printCompressMd5()
+	printVerifyResult()
 }
 
 // main
@@ -203,6 +218,7 @@ func main() {
 		return
 	}
 
+	//从已生成话单中提取指定md5话单
 	if *Extract {
 		if *Md5Record == "" {
 			printExtractMd5()
@@ -212,8 +228,13 @@ func main() {
 		return
 	}
 
+	//压缩指定路径下的话单模板
 	if *Compress {
 		fileproc.CompressLogtar(*gPath)
+	}
+
+	if *Verify {
+		fileproc.VerifyRecogResult(*gPath, *Md5Record)
 	}
 
 	if *Stat {
