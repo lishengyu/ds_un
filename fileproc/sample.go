@@ -140,12 +140,12 @@ func FoundBackMd5Dir(path, md5 string) (*LogSample, error) {
 	return &dlog, nil
 }
 
-func readTargzFile(filename, md5 string) error {
+func readTargzFile(filename, md5 string) (bool, error) {
 	// 打开tar.gz文件
 	f, err := os.Open(filename)
 	if err != nil {
 		fmt.Println("Error opening file:", err)
-		return err
+		return false, err
 	}
 	defer f.Close()
 
@@ -153,7 +153,7 @@ func readTargzFile(filename, md5 string) error {
 	gr, err := gzip.NewReader(f)
 	if err != nil {
 		fmt.Println("Error creating gzip reader:", err)
-		return err
+		return false, err
 	}
 	defer gr.Close()
 
@@ -169,7 +169,7 @@ func readTargzFile(filename, md5 string) error {
 		}
 		if err != nil {
 			fmt.Println("Error reading tar file:", err)
-			return err
+			return false, err
 		}
 
 		if header.Typeflag != tar.TypeReg {
@@ -185,38 +185,84 @@ func readTargzFile(filename, md5 string) error {
 			}
 			if strings.Contains(line, md5) {
 				hitMd5 = true
+				break
 			}
 		}
-	}
-
-	if hitMd5 {
-		fmt.Printf("拷贝文件: %s\n", filename)
-		dn := filepath.Join(ChangePath, strings.ToLower(md5), filepath.Base(filename))
-		done := comm.CopyFile(filename, dn)
-		if done {
-			os.Remove(filename)
-		} else {
-			fmt.Printf("拷贝文件失败：%s\n", filename)
+		if hitMd5 {
+			break
 		}
 	}
 
-	return nil
+	return hitMd5, nil
 }
 
-func extractLogFile(path, md5 string) {
+func extractAuditFile(path, filename, md5 string) {
 	if exist := comm.PathExists(path); !exist {
 		fmt.Printf("Path %s not exist, skip it!\n", path)
+		return
 	}
 
 	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
 		if err != nil {
-			fmt.Printf("filepath walk failed:%v\n", err)
 			return err
 		}
 
 		if !d.IsDir() {
 			if strings.HasSuffix(d.Name(), "tar.gz") {
-				readTargzFile(dir, md5)
+				hit, err := readTargzFile(dir, filename)
+				if err != nil {
+					fmt.Printf("read targz file failed: %v\n", err)
+				}
+				if hit {
+					fmt.Printf("拷贝文件: %s\n", dir)
+					dn := filepath.Join(ChangePath, strings.ToLower(md5), filepath.Base(dir))
+					done := comm.CopyFile(dir, dn)
+					if done {
+						os.Remove(dir)
+					} else {
+						fmt.Printf("拷贝文件失败：%s\n", dir)
+					}
+					return nil
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("filepath walk failed:%v\n", err)
+	}
+}
+
+func extractLogFile(gpath, path, md5 string) {
+	if exist := comm.PathExists(path); !exist {
+		fmt.Printf("Path %s not exist, skip it!\n", path)
+		return
+	}
+
+	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !d.IsDir() {
+			if strings.HasSuffix(d.Name(), "tar.gz") {
+				hit, err := readTargzFile(dir, md5)
+				if err != nil {
+					fmt.Printf("read targz file failed: %v\n", err)
+				}
+				if hit {
+					fmt.Printf("拷贝文件: %s\n", dir)
+					dn := filepath.Join(ChangePath, strings.ToLower(md5), filepath.Base(dir))
+					done := comm.CopyFile(dir, dn)
+					if done {
+						os.Remove(dir)
+					} else {
+						fmt.Printf("拷贝文件失败：%s\n", dir)
+					}
+					extractAuditFile(filepath.Join(gpath, AuditName), dir, md5)
+				}
 			}
 		}
 
@@ -309,15 +355,15 @@ func uncompressDir(path string) {
 func ExtractMd5File(path, md5 string) {
 	LogFilePreEnv(filepath.Join(ChangePath, strings.ToLower(md5)))
 	//识别
-	extractLogFile(filepath.Join(path, IdentifyName), md5)
+	extractLogFile(path, filepath.Join(path, IdentifyName), md5)
 	//监测
-	extractLogFile(filepath.Join(path, MonitorName), md5)
+	extractLogFile(path, filepath.Join(path, MonitorName), md5)
 	//关键字生成话单和备份话单文件名不一致，需要再次处理一下
 	kfile := filepath.Join(path, KeywordName)
 	if exist := comm.PathExists(kfile); !exist {
 		kfile = filepath.Join(path, KeywordNameB)
 	}
-	extractLogFile(kfile, md5)
+	extractLogFile(path, kfile, md5)
 
 	md5path := filepath.Join(ChangePath, strings.ToLower(md5))
 	//解压对应的压缩文件
@@ -327,7 +373,7 @@ func ExtractMd5File(path, md5 string) {
 }
 
 func targzFile(filename string) {
-	dstfile := strings.ReplaceAll(filename, "txt", "tar.gz")
+	dstfile := strings.ReplaceAll(filename, ".txt", ".tar.gz")
 	defer fmt.Printf("生成压缩文件: %s\n", dstfile)
 
 	d, _ := os.Create(dstfile)
@@ -388,5 +434,58 @@ func CompressLogtar(path string) {
 
 	if err != nil {
 		fmt.Printf("filepath walk failed:%v\n", err)
+	}
+}
+
+func getAuditFiles(path string) ([]string, error) {
+	var files []string
+	if exist := comm.PathExists(path); !exist {
+		fmt.Printf("Path %s not exist, skip it!\n", path)
+		return files, nil
+	}
+
+	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
+		if err != nil {
+			fmt.Printf("filepath walk failed:%v\n", err)
+			return err
+		}
+
+		if !d.IsDir() {
+			if strings.HasPrefix(d.Name(), "0x31+0x04a8") && strings.HasSuffix(d.Name(), ".tar.gz") {
+				files = append(files, dir)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("filepath walk failed:%v\n", err)
+	}
+
+	return files, err
+}
+
+func RemoveAudit(path string) {
+	files, err := getAuditFiles(ChangePath)
+	if err != nil {
+		fmt.Printf("get audit files failed: %v\n", err)
+		return
+	}
+
+	if len(files) == 0 {
+		fmt.Printf("no 04a8 files found!!\n")
+		return
+	}
+
+	for _, file := range files {
+		fn := filepath.Base(file)
+		dn := filepath.Join(path, AuditName, fn)
+		err := os.Remove(dn)
+		if err != nil {
+			fmt.Printf("Remove Audit File: %s fail!\n", dn)
+		} else {
+			fmt.Printf("Remove Audit File: %s succ!\n", dn)
+		}
 	}
 }

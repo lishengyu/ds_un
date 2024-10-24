@@ -32,6 +32,9 @@ var (
 	//对当前路径下的文件进行压缩tar.gz
 	Compress = flag.Bool("compress", false, "对指定路径下的logtar文件进行压缩")
 
+	//删除指定路径下的审计日志文件
+	RemoveAudit = flag.Bool("rmaudit", false, "删除指定路径下生成的审计日志文件")
+
 	//对补报的话单和人工答案进行核对
 	Verify = flag.Bool("verify", false, "对已生成答案进行校验")
 
@@ -135,6 +138,16 @@ func printCompressMd5() {
 	fmt.Fprintf(os.Stderr, "    -l 指定的话单文件路径\n")
 }
 
+func printRmAudit() {
+	fmt.Fprintf(os.Stderr, "\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n")
+	fmt.Fprintf(os.Stderr, "使用说明：\n")
+	fmt.Fprintf(os.Stderr, "    删除指定路径下生成的审计日志，删除的文件为./change目录下的同名0x04a8文件\n")
+	fmt.Fprintf(os.Stderr, "使用示例：\n")
+	fmt.Fprintf(os.Stderr, "    %s -rmaudit\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "输入：\n")
+	fmt.Fprintf(os.Stderr, "    -l 指定的话单文件路径\n")
+}
+
 func printVerifyResult() {
 	fmt.Fprintf(os.Stderr, "\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n")
 	fmt.Fprintf(os.Stderr, "使用说明：\n")
@@ -180,6 +193,7 @@ func printUsage() {
 	printGenLogtar()
 	printExtractMd5()
 	printCompressMd5()
+	printRmAudit()
 	printVerifyResult()
 }
 
@@ -231,6 +245,10 @@ func main() {
 	//压缩指定路径下的话单模板
 	if *Compress {
 		fileproc.CompressLogtar(*gPath)
+	}
+
+	if *RemoveAudit {
+		fileproc.RemoveAudit(*gPath)
 	}
 
 	if *Verify {

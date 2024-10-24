@@ -7,4 +7,5 @@ const (
 	EvidenceName  = "ds_evidence_file"
 	KeywordName   = "ds_keyword_file"
 	KeywordNameB  = "ds_data_keyword"
+	AuditName     = "ds_audit_log"
 )
