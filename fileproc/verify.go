@@ -25,6 +25,22 @@ type verifyRes struct {
 	errinfo string
 }
 
+type AuditStat struct {
+	Files [LogIndexMax]int
+	Lines [LogIndexMax]int
+}
+
+type AuditInfo struct {
+	FileName string
+	FileFlag uint64
+	HasFile  bool
+}
+
+var auditStat AuditStat
+var auditMap sync.Map
+
+var auditFlag uint64 = (1 << 1) | (1 << 3)
+
 func loadMd5Dict(mpath string) error {
 	if exist := comm.PathExists(mpath); !exist {
 		return fmt.Errorf(fmt.Sprintf("path %s not exist, skip it", mpath))
@@ -243,5 +259,241 @@ func VerifyRecogResult(lpath, mpath string) error {
 	FindLogC0Path(lpath)
 
 	PrintVerifyRes()
+	return nil
+}
+
+type Callback func(string, int, string) error
+
+func CallFileProc(filename string, logType int, fn string) error {
+	value, ok := auditMap.Load(filename)
+	if ok {
+		node := value.(*AuditInfo)
+		if node.FileFlag != auditFlag {
+			fmt.Printf("audit file '%s' create & upload flag error\n", filename)
+		} else {
+			node.HasFile = true
+		}
+	} else {
+		fmt.Printf("file '%s' miss audit log\n", filename)
+	}
+	return nil
+}
+
+func CallAuditProc(line string, logType int, fn string) error {
+	fs := strings.Split(line, "|")
+	if len(fs) != 9 {
+		fmt.Printf("invalid audit log: %s\n", line)
+		return nil
+	}
+	if fs[5] == "" {
+		fmt.Printf("invalid audit log: %s\n", line)
+		return nil
+	}
+
+	filetype, err := strconv.ParseUint(fs[7], 10, 64)
+	if err != nil {
+		fmt.Printf("audit log type invalid: %v\n", line)
+		return nil
+	}
+
+	filename := filepath.Base(fs[5])
+
+	auditStat.Lines[logType]++
+	value, ok := auditMap.Load(filename)
+	if ok {
+		node := value.(*AuditInfo)
+		res := node.FileFlag & (1 << filetype)
+		if res == 1 {
+			fmt.Printf("audit log type repeat: %v\n", line)
+		} else {
+			node.FileFlag |= 1 << filetype
+		}
+	} else {
+		node := &AuditInfo{
+			FileName: filename,
+			FileFlag: 1 << filetype,
+			HasFile:  filename == fn,
+		}
+		auditMap.Store(filename, node)
+	}
+
+	return nil
+}
+
+func TargzFileProc(filename string, logType int, call Callback) error {
+	// 打开tar.gz文件
+	f, err := os.Open(filename)
+	if err != nil {
+		fmt.Println("Error opening file:", err)
+		return err
+	}
+	defer f.Close()
+
+	// 创建gzip.Reader
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		fmt.Println("Error creating gzip reader:", err)
+		return err
+	}
+	defer gr.Close()
+
+	// 创建tar.Reader
+	tr := tar.NewReader(gr)
+
+	// 遍历tar文件中的每个文件
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fmt.Println("Error reading tar file:", err)
+			return err
+		}
+
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		scanner := bufio.NewScanner(tr)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			call(line, logType, filepath.Base(filename))
+		}
+	}
+
+	return nil
+}
+
+func LoadAuditMd5Map(path string) error {
+	if exist := comm.PathExists(path); !exist {
+		return fmt.Errorf("Path %s not exist, skip it!\n", path)
+	}
+
+	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
+		if err != nil {
+			fmt.Printf("filepath walk failed:%v\n", err)
+			return err
+		}
+
+		if !d.IsDir() {
+			if strings.HasPrefix(d.Name(), "0x31+0x04a8") && strings.HasSuffix(d.Name(), "tar.gz") {
+				auditStat.Files[AuditIndex]++
+				TargzFileProc(dir, AuditIndex, CallAuditProc)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("filepath walk failed:%v\n", err)
+	}
+	return err
+}
+
+func LoadLogPathFile(path string, logType int) error {
+	if exist := comm.PathExists(path); !exist {
+		return fmt.Errorf("Path %s not exist, skip it!\n", path)
+	}
+
+	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
+		if err != nil {
+			fmt.Printf("filepath walk failed:%v\n", err)
+			return err
+		}
+
+		if !d.IsDir() {
+			if strings.HasSuffix(d.Name(), "tar.gz") || strings.HasSuffix(d.Name(), "zip") {
+				auditStat.Files[logType]++
+				CallFileProc(filepath.Base(dir), logType, filepath.Base(dir))
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("filepath walk failed:%v\n", err)
+	}
+	return err
+}
+
+func VerifyAuditFile(lpath string, date string) error {
+	//读取审计日志文件，存表
+	path := filepath.Join(lpath, AuditName, date)
+	err := LoadAuditMd5Map(path)
+	if err != nil {
+		fmt.Printf("读取审计日志失败：%v", err)
+		return err
+	}
+	//读取识别日志文件
+	path = filepath.Join(lpath, IdentifyName, date)
+	err = LoadLogPathFile(path, IdentifyIndex)
+	if err != nil {
+		fmt.Printf("读取识别话单文件失败：%v", err)
+		return err
+	}
+	//读取监测日志文件
+	path = filepath.Join(lpath, MonitorName, date)
+	err = LoadLogPathFile(path, MonitorIndex)
+	if err != nil {
+		fmt.Printf("读取监测话单文件失败：%v", err)
+		return err
+	}
+	//读取关键字日志文件
+	path = filepath.Join(lpath, KeywordName, date)
+	if exist := comm.PathExists(path); !exist {
+		path = filepath.Join(lpath, KeywordNameB, date)
+	}
+	err = LoadLogPathFile(path, KeywordIndex)
+	if err != nil {
+		fmt.Printf("读取关键字话单文件失败：%v", err)
+		return err
+	}
+	//读取取证文件
+	path = filepath.Join(lpath, EvidenceName, date)
+	err = LoadLogPathFile(path, EvidenceIndex)
+	if err != nil {
+		fmt.Printf("读取关键字话单文件失败：%v", err)
+		return err
+	}
+	//读取规则库文件
+	path = filepath.Join(lpath, RulesName, date)
+	err = LoadLogPathFile(path, RulesIndex)
+	if err != nil {
+		fmt.Printf("读取规则库话单文件失败：%v", err)
+		return err
+	}
+
+	//遍历map，查询是否所有审计日志都有对应的话单文件
+	auditMap.Range(func(key, value interface{}) bool {
+		node := value.(*AuditInfo)
+		if !node.HasFile {
+			fmt.Printf("audit log miss file '%s'\n", node.FileName)
+		}
+		return true
+	})
+
+	nums := 0
+	for i := 0; i < LogIndexMax; i++ {
+		nums += auditStat.Files[i]
+	}
+
+	//打印统计信息
+	fmt.Printf("日志类型\t文件数量\t日志数量\n")
+	fmt.Printf("审计日志\t%010d\t%010d\n", auditStat.Files[AuditIndex], auditStat.Lines[AuditIndex])
+	fmt.Printf("识别日志\t%010d\t%010d\n", auditStat.Files[IdentifyIndex], auditStat.Files[IdentifyIndex])
+	fmt.Printf("监测日志\t%010d\t%010d\n", auditStat.Files[MonitorIndex], auditStat.Files[MonitorIndex])
+	fmt.Printf("取证文件\t%010d\t%010d\n", auditStat.Files[EvidenceIndex], auditStat.Files[EvidenceIndex])
+	fmt.Printf("规则库  \t%010d\t%010d\n", auditStat.Files[RulesIndex], auditStat.Files[RulesIndex])
+	fmt.Printf("关键词  \t%010d\t%010d\n", auditStat.Files[KeywordIndex], auditStat.Files[KeywordIndex])
+	fmt.Printf("++++++++++++++++++++++++++++++++++++++++++++\n")
+	fmt.Printf("总文件数\t总审计日志数\t是否匹配\n")
+	fmt.Printf("%010d\t%010d\t%v\n", nums, auditStat.Lines[AuditIndex], nums*2 == auditStat.Lines[AuditIndex])
 	return nil
 }

@@ -7,5 +7,16 @@ const (
 	EvidenceName  = "ds_evidence_file"
 	KeywordName   = "ds_keyword_file"
 	KeywordNameB  = "ds_data_keyword"
+	RulesName     = "ds_data_identify_rules"
 	AuditName     = "ds_audit_log"
+)
+
+const (
+	IdentifyIndex = iota
+	MonitorIndex
+	EvidenceIndex
+	RulesIndex
+	KeywordIndex
+	AuditIndex
+	LogIndexMax
 )

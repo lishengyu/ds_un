@@ -3,7 +3,8 @@ package fileproc
 import (
 	"ds_tool/comm"
 	"ds_tool/conf"
-	"ds_tool/pkt"
+
+	//"ds_tool/pkt"
 	"ds_tool/spec"
 	"encoding/base64"
 	"fmt"

@@ -38,6 +38,10 @@ var (
 	//对补报的话单和人工答案进行核对
 	Verify = flag.Bool("verify", false, "对已生成答案进行校验")
 
+	Audit = flag.Bool("audit", false, "对审计日志和话单文件进行校验")
+
+	DataTime = flag.String("date", "", "查询指定日期的文件")
+
 	UsageFlag = flag.Bool("usage", false, "打印使用场景示例")
 
 	Stat    = flag.Bool("stat", false, "统计相关上报信息")
@@ -159,6 +163,19 @@ func printVerifyResult() {
 	fmt.Fprintf(os.Stderr, "    -md5 人工确认的md5结果表\n")
 }
 
+func printVerifyAuditResult() {
+	fmt.Fprintf(os.Stderr, "\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n")
+	fmt.Fprintf(os.Stderr, "使用说明：\n")
+	fmt.Fprintf(os.Stderr, "    校验日志文件和审计日志是否一致\n")
+	fmt.Fprintf(os.Stderr, "使用示例：\n")
+	fmt.Fprintf(os.Stderr, "    %s -verify -audit -l /home/udpi_log/\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "输入：\n")
+	fmt.Fprintf(os.Stderr, "    -l   话单文件路径，示例 /home/udpi_log/\n")
+	fmt.Fprintf(os.Stderr, "    -verify 核对文件\n")
+	fmt.Fprintf(os.Stderr, "    -audit  核对审计日志文件\n")
+	fmt.Fprintf(os.Stderr, "    -date   备份话单查询时，需要添加日期，否则查询所有备份的话单文件\n")
+}
+
 func printGenUsage1() {
 	fmt.Fprintf(os.Stderr, "构建话单和样本示例：(来源于话单字段+样本内容)\n")
 	fmt.Fprintf(os.Stderr, "++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n")
@@ -195,6 +212,7 @@ func printUsage() {
 	printCompressMd5()
 	printRmAudit()
 	printVerifyResult()
+	printVerifyAuditResult()
 }
 
 // main
@@ -252,7 +270,15 @@ func main() {
 	}
 
 	if *Verify {
-		fileproc.VerifyRecogResult(*gPath, *Md5Record)
+		if *Audit {
+			fileproc.VerifyAuditFile(*gPath, *DataTime)
+		} else {
+			if *Md5Record == "" {
+				printVerifyResult()
+				return
+			}
+			fileproc.VerifyRecogResult(*gPath, *Md5Record)
+		}
 	}
 
 	if *Stat {
