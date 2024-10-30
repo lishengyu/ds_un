@@ -38,6 +38,7 @@ type AuditInfo struct {
 
 var auditStat AuditStat
 var auditMap sync.Map
+var auditExtraLog []string
 
 var auditFlag uint64 = (1 << 1) | (1 << 3)
 
@@ -270,9 +271,8 @@ func CallFileProc(filename string, logType int, fn string) error {
 		node := value.(*AuditInfo)
 		if node.FileFlag != auditFlag {
 			fmt.Printf("audit file '%s' create & upload flag error\n", filename)
-		} else {
-			node.HasFile = true
 		}
+		node.HasFile = true
 	} else {
 		fmt.Printf("file '%s' miss audit log\n", filename)
 	}
@@ -297,6 +297,10 @@ func CallAuditProc(line string, logType int, fn string) error {
 	}
 
 	filename := filepath.Base(fs[5])
+	if strings.HasSuffix(filename, "eu.xml") {
+		auditExtraLog = append(auditExtraLog, filename)
+		return nil
+	}
 
 	auditStat.Lines[logType]++
 	value, ok := auditMap.Load(filename)
@@ -312,7 +316,6 @@ func CallAuditProc(line string, logType int, fn string) error {
 		node := &AuditInfo{
 			FileName: filename,
 			FileFlag: 1 << filetype,
-			HasFile:  filename == fn,
 		}
 		auditMap.Store(filename, node)
 	}
@@ -374,17 +377,25 @@ func LoadAuditMd5Map(path string) error {
 		return fmt.Errorf("Path %s not exist, skip it!\n", path)
 	}
 
+	deep1 := strings.Count(path, string(os.PathSeparator))
 	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
 		if err != nil {
 			fmt.Printf("filepath walk failed:%v\n", err)
 			return err
 		}
 
-		if !d.IsDir() {
-			if strings.HasPrefix(d.Name(), "0x31+0x04a8") && strings.HasSuffix(d.Name(), "tar.gz") {
-				auditStat.Files[AuditIndex]++
-				TargzFileProc(dir, AuditIndex, CallAuditProc)
-			}
+		if d.IsDir() {
+			return nil
+		}
+
+		deep2 := strings.Count(dir, string(os.PathSeparator))
+		if deep2 > deep1+1 {
+			//跳过子目录下的文件
+			return nil
+		}
+
+		if strings.HasPrefix(d.Name(), "0x31+0x04a8") && strings.HasSuffix(d.Name(), "tar.gz") {
+			TargzFileProc(dir, AuditIndex, CallAuditProc)
 		}
 
 		return nil
@@ -401,17 +412,26 @@ func LoadLogPathFile(path string, logType int) error {
 		return fmt.Errorf("Path %s not exist, skip it!\n", path)
 	}
 
+	deep1 := strings.Count(path, string(os.PathSeparator))
 	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
 		if err != nil {
 			fmt.Printf("filepath walk failed:%v\n", err)
 			return err
 		}
 
-		if !d.IsDir() {
-			if strings.HasSuffix(d.Name(), "tar.gz") || strings.HasSuffix(d.Name(), "zip") {
-				auditStat.Files[logType]++
-				CallFileProc(filepath.Base(dir), logType, filepath.Base(dir))
-			}
+		if d.IsDir() {
+			return nil
+		}
+
+		deep2 := strings.Count(dir, string(os.PathSeparator))
+		if deep2 > deep1+1 {
+			//跳过子目录下的文件
+			return nil
+		}
+
+		if strings.HasSuffix(d.Name(), "tar.gz") || strings.HasSuffix(d.Name(), "zip") {
+			auditStat.Files[logType]++
+			CallFileProc(filepath.Base(dir), logType, filepath.Base(dir))
 		}
 
 		return nil
@@ -423,32 +443,46 @@ func LoadLogPathFile(path string, logType int) error {
 	return err
 }
 
+func getPathByParam(lpath, logpath, date string) string {
+	if date == "" {
+		return filepath.Join(lpath, logpath)
+	}
+	return filepath.Join(lpath, logpath, date, "success")
+}
+
 func VerifyAuditFile(lpath string, date string) error {
-	//读取审计日志文件，存表
-	path := filepath.Join(lpath, AuditName, date)
+	//解析审计日志，存表
+	path := getPathByParam(lpath, AuditName, date)
 	err := LoadAuditMd5Map(path)
 	if err != nil {
 		fmt.Printf("读取审计日志失败：%v", err)
 		return err
 	}
+	//读取审计日志文件
+	path = getPathByParam(lpath, AuditName, date)
+	err = LoadLogPathFile(path, AuditIndex)
+	if err != nil {
+		fmt.Printf("读取审计话单文件失败：%v", err)
+		return err
+	}
 	//读取识别日志文件
-	path = filepath.Join(lpath, IdentifyName, date)
+	path = getPathByParam(lpath, IdentifyName, date)
 	err = LoadLogPathFile(path, IdentifyIndex)
 	if err != nil {
 		fmt.Printf("读取识别话单文件失败：%v", err)
 		return err
 	}
 	//读取监测日志文件
-	path = filepath.Join(lpath, MonitorName, date)
+	path = getPathByParam(lpath, MonitorName, date)
 	err = LoadLogPathFile(path, MonitorIndex)
 	if err != nil {
 		fmt.Printf("读取监测话单文件失败：%v", err)
 		return err
 	}
 	//读取关键字日志文件
-	path = filepath.Join(lpath, KeywordName, date)
+	path = getPathByParam(lpath, KeywordName, date)
 	if exist := comm.PathExists(path); !exist {
-		path = filepath.Join(lpath, KeywordNameB, date)
+		path = getPathByParam(lpath, KeywordNameB, date)
 	}
 	err = LoadLogPathFile(path, KeywordIndex)
 	if err != nil {
@@ -456,14 +490,14 @@ func VerifyAuditFile(lpath string, date string) error {
 		return err
 	}
 	//读取取证文件
-	path = filepath.Join(lpath, EvidenceName, date)
+	path = getPathByParam(lpath, EvidenceName, date)
 	err = LoadLogPathFile(path, EvidenceIndex)
 	if err != nil {
 		fmt.Printf("读取关键字话单文件失败：%v", err)
 		return err
 	}
 	//读取规则库文件
-	path = filepath.Join(lpath, RulesName, date)
+	path = getPathByParam(lpath, RulesName, date)
 	err = LoadLogPathFile(path, RulesIndex)
 	if err != nil {
 		fmt.Printf("读取规则库话单文件失败：%v", err)
@@ -485,6 +519,11 @@ func VerifyAuditFile(lpath string, date string) error {
 	}
 
 	//打印统计信息
+	fmt.Printf("\n")
+	for _, v := range auditExtraLog {
+		fmt.Printf("手动操作审计日志记录：%s\n", v)
+	}
+	fmt.Printf("\n")
 	fmt.Printf("日志类型\t文件数量\t日志数量\n")
 	fmt.Printf("审计日志\t%010d\t%010d\n", auditStat.Files[AuditIndex], auditStat.Lines[AuditIndex])
 	fmt.Printf("识别日志\t%010d\t%010d\n", auditStat.Files[IdentifyIndex], auditStat.Files[IdentifyIndex])

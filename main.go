@@ -169,6 +169,7 @@ func printVerifyAuditResult() {
 	fmt.Fprintf(os.Stderr, "    校验日志文件和审计日志是否一致\n")
 	fmt.Fprintf(os.Stderr, "使用示例：\n")
 	fmt.Fprintf(os.Stderr, "    %s -verify -audit -l /home/udpi_log/\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "    %s -verify -audit -l /home/data/ -date 20241025\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "输入：\n")
 	fmt.Fprintf(os.Stderr, "    -l   话单文件路径，示例 /home/udpi_log/\n")
 	fmt.Fprintf(os.Stderr, "    -verify 核对文件\n")
