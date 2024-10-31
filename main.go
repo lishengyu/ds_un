@@ -47,6 +47,12 @@ var (
 	Stat    = flag.Bool("stat", false, "统计相关上报信息")
 	oPath   = flag.String("o", "report.xlsx", "话单文件核查，生成报告文件名")
 	Verbose = flag.Bool("verbose", false, "用于话单核查，是否输出详细信息")
+
+	Ver = flag.Bool("v", false, "查看工具版本信息")
+)
+
+var (
+	version = "version"
 )
 
 const (
@@ -222,8 +228,13 @@ func main() {
 	//flag.Usage = printUsage
 	flag.Parse()
 
-	if *UsageFlag {
+	if *UsageFlag || (flag.NArg() == 0 && flag.NFlag() == 0) {
 		printUsage()
+		return
+	}
+
+	if *Ver {
+		fmt.Printf("Version: %s\n\n", version)
 		return
 	}
 

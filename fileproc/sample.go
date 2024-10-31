@@ -183,7 +183,7 @@ func readTargzFile(filename, md5 string) (bool, error) {
 			if line == "" {
 				continue
 			}
-			if strings.Contains(line, md5) {
+			if strings.Contains(strings.ToLower(line), md5) {
 				hitMd5 = true
 				break
 			}
