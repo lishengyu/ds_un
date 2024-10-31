@@ -39,6 +39,7 @@ type AuditInfo struct {
 var auditStat AuditStat
 var auditMap sync.Map
 var auditExtraLog []string
+var auditRepeat []string
 
 var auditFlag uint64 = (1 << 1) | (1 << 3)
 
@@ -281,12 +282,12 @@ func CallFileProc(filename string, logType int, fn string) error {
 
 func CallAuditProc(line string, logType int, fn string) error {
 	fs := strings.Split(line, "|")
-	if len(fs) != 9 {
+	if len(fs) < 9 {
 		fmt.Printf("invalid audit log: %s\n", line)
 		return nil
 	}
 	if fs[5] == "" {
-		fmt.Printf("invalid audit log: %s\n", line)
+		fmt.Printf("invalid audit log filename: %s\n", line)
 		return nil
 	}
 
@@ -307,8 +308,8 @@ func CallAuditProc(line string, logType int, fn string) error {
 	if ok {
 		node := value.(*AuditInfo)
 		res := node.FileFlag & (1 << filetype)
-		if res == 1 {
-			fmt.Printf("audit log type repeat: %v\n", line)
+		if res != 0 {
+			auditRepeat = append(auditRepeat, filename)
 		} else {
 			node.FileFlag |= 1 << filetype
 		}
@@ -394,7 +395,7 @@ func LoadAuditMd5Map(path string) error {
 			return nil
 		}
 
-		if strings.HasPrefix(d.Name(), "0x31+0x04a8") && strings.HasSuffix(d.Name(), "tar.gz") {
+		if strings.HasSuffix(d.Name(), "tar.gz") {
 			TargzFileProc(dir, AuditIndex, CallAuditProc)
 		}
 
@@ -516,6 +517,14 @@ func VerifyAuditFile(lpath string, date string) error {
 	nums := 0
 	for i := 0; i < LogIndexMax; i++ {
 		nums += auditStat.Files[i]
+	}
+
+	//打印重复审计日志记录
+	if len(auditRepeat) > 0 {
+		for _, fn := range auditRepeat {
+			comm.AppendFile("./repeat.txt", []byte(fn+"\n"))
+		}
+		fmt.Printf("审计日志重复%d条，见文件repeat.txt\n", len(auditRepeat))
 	}
 
 	//打印统计信息
