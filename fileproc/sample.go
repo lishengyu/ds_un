@@ -5,17 +5,37 @@ import (
 	"bufio"
 	"compress/gzip"
 	"ds_tool/comm"
+	"ds_tool/spec"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 var (
 	UnrecoverPath = "./miss"
 	ChangePath    = "./change"
+)
+
+type MapKey struct {
+	Cmdid string
+	Md5   string
+}
+
+type MapValue struct {
+	Md5   string
+	Count [LogIndexMax]int
+}
+
+var (
+	MapEvidence sync.Map
+	MapIdentify sync.Map
+	MapMonitor  sync.Map
+	MapKeyword  sync.Map
 )
 
 // CompareSampleFile 以 dst未标准，查找src，是否有不存在的文件
@@ -488,4 +508,333 @@ func RemoveAudit(path string) {
 			fmt.Printf("Remove Audit File: %s succ!\n", dn)
 		}
 	}
+}
+
+func LoadEvidenceFile(path string, logType int) error {
+	if exist := comm.PathExists(path); !exist {
+		return fmt.Errorf("Path %s not exist, skip it!\n", path)
+	}
+
+	deep1 := strings.Count(path, string(os.PathSeparator))
+	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
+		if err != nil {
+			fmt.Printf("filepath walk failed:%v\n", err)
+			return err
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		if !strings.HasSuffix(d.Name(), "zip") {
+			return nil
+		}
+
+		deep2 := strings.Count(dir, string(os.PathSeparator))
+		if deep2 > deep1+1 {
+			//跳过子目录下的文件
+			return nil
+		}
+
+		bn := filepath.Base(dir)
+		fs := strings.Split(bn, "+")
+		if len(fs) != 7 {
+			return nil
+		}
+
+		key := MapKey{
+			Cmdid: fs[2],
+			Md5:   strings.TrimSuffix(fs[6], ".zip"),
+		}
+
+		value, ok := MapEvidence.Load(key)
+		if ok {
+			v := value.(*MapValue)
+			v.Count[EvidenceIndex]++
+		} else {
+			v := &MapValue{
+				Md5: fs[6],
+			}
+			v.Count[EvidenceIndex]++
+			MapEvidence.Store(key, v)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("filepath walk failed:%v\n", err)
+	}
+	return err
+}
+
+func LoadTarGzFile(filename string, logType int) error {
+	// 打开tar.gz文件
+	f, err := os.Open(filename)
+	if err != nil {
+		fmt.Println("Error opening file:", err)
+		return err
+	}
+	defer f.Close()
+
+	// 创建gzip.Reader
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		fmt.Println("Error creating gzip reader:", err)
+		return err
+	}
+	defer gr.Close()
+
+	// 创建tar.Reader
+	tr := tar.NewReader(gr)
+
+	// 遍历tar文件中的每个文件
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fmt.Println("Error reading tar file:", err)
+			return err
+		}
+
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		scanner := bufio.NewScanner(tr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+
+			fs := strings.Split(line, "|")
+
+			var key MapKey
+			if logType == IdentifyIndex {
+				if len(fs) < spec.C0_Max {
+					continue
+				}
+
+				group, _ := strconv.Atoi(fs[spec.C0_DataInfoNum])
+				offset := (group - 1) * 3
+				key.Cmdid = fs[spec.C0_CommandID]
+				key.Md5 = fs[spec.C0_FileMD5+offset]
+
+				value, ok := MapIdentify.Load(key)
+				if ok {
+					v := value.(*MapValue)
+					v.Count[IdentifyIndex]++
+				} else {
+					var v MapValue
+					v.Md5 = key.Md5
+					v.Count[IdentifyIndex]++
+					MapIdentify.Store(key, &v)
+				}
+
+			} else if logType == MonitorIndex {
+				key.Cmdid = fs[spec.C1_CommandId]
+				key.Md5 = fs[spec.C1_FileMD5]
+
+				if len(fs) < spec.C1_Max {
+					continue
+				}
+				value, ok := MapMonitor.Load(key)
+				if ok {
+					v := value.(*MapValue)
+					v.Count[MonitorIndex]++
+				} else {
+					var v MapValue
+					v.Md5 = key.Md5
+					v.Count[MonitorIndex]++
+					MapMonitor.Store(key, &v)
+				}
+			} else if logType == KeywordIndex {
+				key.Cmdid = fs[spec.C4_CommandId]
+				key.Md5 = fs[spec.C4_FileMD5]
+
+				if len(fs) < spec.C4_Max {
+					continue
+				}
+
+				value, ok := MapKeyword.Load(key)
+				if ok {
+					v := value.(*MapValue)
+					v.Count[KeywordIndex]++
+				} else {
+					var v MapValue
+					v.Md5 = key.Md5
+					v.Count[KeywordIndex]++
+					MapKeyword.Store(key, &v)
+				}
+			} else {
+				fmt.Printf("不支持的话单类型")
+			}
+		}
+	}
+
+	return nil
+}
+
+func walkTargzFile(path string, logType int) error {
+	deep1 := strings.Count(path, string(os.PathSeparator))
+	fmt.Printf("walk dir %s\n", path)
+	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
+		if err != nil {
+			fmt.Printf("filepath walk failed:%v\n", err)
+			return err
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		deep2 := strings.Count(dir, string(os.PathSeparator))
+		if deep2 > deep1+1 {
+			//跳过子目录下的文件
+			return nil
+		}
+
+		if strings.HasSuffix(d.Name(), "tar.gz") {
+			LoadTarGzFile(dir, logType)
+		}
+
+		return nil
+	})
+
+	return err
+}
+
+func VerifySampleRelation(dir, date string) error {
+	//取证文件存表
+	path := getPathByParam(dir, EvidenceName, date)
+	err := LoadEvidenceFile(path, EvidenceIndex)
+	if err != nil {
+		fmt.Printf("读取取证文件失败：%v", err)
+		return err
+	}
+
+	//识别文件存表
+	path = getPathByParam(dir, IdentifyName, date)
+	err = walkTargzFile(path, IdentifyIndex)
+	if err != nil {
+		fmt.Printf("读取识别日志失败：%v", err)
+		return err
+	}
+
+	//监测文件存表
+	path = getPathByParam(dir, MonitorName, date)
+	err = walkTargzFile(path, MonitorIndex)
+	if err != nil {
+		fmt.Printf("读取监测日志失败：%v", err)
+		return err
+	}
+
+	//关键字文件存表
+	path = getPathByParam(dir, KeywordName, date)
+	if exist := comm.PathExists(path); !exist {
+		path = getPathByParam(dir, KeywordNameB, date)
+	}
+
+	err = walkTargzFile(path, KeywordIndex)
+	if err != nil {
+		fmt.Printf("读取关键字日志失败：%v", err)
+		return err
+	}
+
+	//log话单 ==> 取证文件
+	var recordC0 int
+	var missSample1 int
+	MapIdentify.Range(func(key, value interface{}) bool {
+		k := key.(MapKey)
+		value, ok := MapEvidence.Load(key)
+		if ok {
+			v := value.(*MapValue)
+			v.Count[IdentifyIndex]++
+			MapEvidence.Store(key, v)
+		} else {
+			missSample1++
+			fmt.Printf("MD5:%s, CmdId:%s C0缺失取证文件\n", k.Md5, k.Cmdid)
+		}
+		recordC0++
+		return true
+	})
+	var recordC1 int
+	var missSample2 int
+	MapMonitor.Range(func(key, value interface{}) bool {
+		k := key.(MapKey)
+		value, ok := MapEvidence.Load(key)
+		if ok {
+			v := value.(*MapValue)
+			v.Count[MonitorIndex]++
+		} else {
+			missSample2++
+			fmt.Printf("MD5:%s, CmdId:%s C1缺失取证文件\n", k.Md5, k.Cmdid)
+		}
+		recordC1++
+		return true
+	})
+	var recordC4 int
+	var missSample3 int
+	MapKeyword.Range(func(key, value interface{}) bool {
+		k := key.(MapKey)
+		value, ok := MapEvidence.Load(key)
+		if ok {
+			v := value.(*MapValue)
+			v.Count[KeywordIndex]++
+		} else {
+			missSample3++
+			fmt.Printf("MD5:%s, CmdId:%s C4缺失取证文件\n", k.Md5, k.Cmdid)
+		}
+		recordC4++
+		return true
+	})
+
+	var recordC3 int
+	var missC0 int
+	var missC1 int
+	//var missC4 int
+	MapEvidence.Range(func(key, value interface{}) bool {
+		k := key.(MapKey)
+		v := value.(*MapValue)
+		recordC3++
+
+		if v.Count[IdentifyIndex] > 0 && v.Count[MonitorIndex] > 0 && v.Count[KeywordIndex] > 0 {
+			return true
+		} else if v.Count[IdentifyIndex] > 0 && v.Count[MonitorIndex] > 0 {
+			return true
+		} else if v.Count[KeywordIndex] > 0 {
+			return true
+		} else if v.Count[IdentifyIndex] == 0 {
+			missC0++
+			fmt.Printf("取证文件 MD5:%s, CmdId:%s 缺失C0话单\n", k.Md5, k.Cmdid)
+		} else if v.Count[MonitorIndex] == 0 {
+			missC1++
+			fmt.Printf("取证文件 MD5:%s, CmdId:%s 缺失C1话单\n", k.Md5, k.Cmdid)
+		}
+
+		return true
+	})
+
+	fmt.Printf("\n")
+	fmt.Printf("================\n")
+	fmt.Printf("C0话单缺取证文件：%d\n", missSample1)
+	fmt.Printf("C1话单缺取证文件：%d\n", missSample2)
+	fmt.Printf("C4话单缺取证文件：%d\n", missSample3)
+
+	fmt.Printf("\n")
+	fmt.Printf("================\n")
+	fmt.Printf("取证文件缺C0话单：%d\n", missC0)
+	fmt.Printf("取证文件缺C1话单：%d\n", missC1)
+	//fmt.Printf("取证文件缺C4话单：%d\n", missC4)
+
+	fmt.Printf("\n")
+	fmt.Printf("================\n")
+	fmt.Printf("识别  条数(md5+cmdid去重)：%d\n", recordC0)
+	fmt.Printf("监测  条数(md5+cmdid去重)：%d\n", recordC1)
+	fmt.Printf("关键字条数(md5+cmdid去重)：%d\n", recordC4)
+	fmt.Printf("取证  条数(md5+cmdid去重)：%d\n", recordC3)
+	return nil
 }
